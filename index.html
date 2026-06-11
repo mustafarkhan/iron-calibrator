@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="description" content="Iron Calibrator — tune MBT turret PID loops in a browser-based HIL diagnostics hobby game." />
+<title>Iron Calibrator — Forward HIL Diagnostics</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+<!-- ============================ HANGAR ============================ -->
+<section id="screen-hangar" class="screen">
+  <header class="masthead">
+    <div>
+      <p class="overline">Forward Operating Base "Sarir" &middot; 4th Armored Battalion &middot; Maintenance Company</p>
+      <h1>IRON CALIBRATOR</h1>
+      <p class="sub">Forward HIL Diagnostics &mdash; Turret Stabilization Bay</p>
+    </div>
+    <div class="fleet-box">
+      <p class="overline">Fleet readiness</p>
+      <p id="fleet-status" class="fleet-num">0 / 3</p>
+      <p class="muted small">hulls certified</p>
+    </div>
+  </header>
+
+  <div id="campaign-banner" class="banner hidden"></div>
+
+  <p class="brief">
+    Damaged MBTs are rolling in from the multi-domain wargame. Hook each hull to the HIL terminal,
+    re-derive the azimuth PID loop, pass the certification slew, then prove the tune under live fire.
+    Certify a hull to unlock the next bay.
+  </p>
+
+  <div id="hangar-cards" class="hangar-grid"></div>
+
+  <footer class="foot muted small">
+    Engineering sim &middot; second-order turret plant, drive saturation, anti-windup, terrain torque &middot;
+    progress saved locally
+  </footer>
+</section>
+
+<!-- ============================== BAY ============================= -->
+<section id="screen-bay" class="screen hidden">
+  <header class="baybar">
+    <button id="btn-back" class="btn ghost">&larr; Hangar</button>
+    <div class="baytitle">
+      <h2 id="bay-title">VT4</h2>
+      <span id="bay-class" class="muted small"></span>
+    </div>
+    <div id="bay-status-pills" class="pills"></div>
+    <button id="btn-manual" class="btn ghost">Field manual</button>
+  </header>
+
+  <div id="workorder" class="callout warn"></div>
+
+  <div class="bay-grid">
+    <!-- left: bench -->
+    <div class="panel">
+      <div class="panel-head">
+        <span>HIL BENCH &mdash; LIVE TURRET</span>
+        <span id="bench-mode" class="tag"></span>
+      </div>
+      <div class="panel-body">
+        <canvas id="turret-canvas" width="560" height="560"></canvas>
+        <div class="readouts">
+          <div class="ro"><span id="ro-az">0.0&deg;</span><label>gun azimuth</label></div>
+          <div class="ro"><span id="ro-err">0.0&deg;</span><label>tracking error</label></div>
+          <div class="ro"><span id="ro-rate">0&deg;/s</span><label>traverse rate</label></div>
+          <div class="ro"><span id="ro-eff">0%</span><label>drive effort</label></div>
+        </div>
+        <div class="ctl-row">
+          <label class="overline">Command gun azimuth</label>
+          <div id="slew-buttons" class="btn-row"></div>
+        </div>
+        <div class="ctl-row toggles">
+          <label class="tgl"><input type="checkbox" id="tgl-terrain" checked /><span>Terrain disturbance</span></label>
+          <label class="tgl"><input type="checkbox" id="tgl-autoslew" /><span>Wargame auto-slew</span></label>
+        </div>
+        <div id="clutch-warning" class="callout danger hidden">
+          <strong>SAFETY CLUTCH ENGAGED</strong> &mdash; the loop went unstable and the traverse drive was
+          disconnected. Back off Kp or add Kd before re-engaging.
+        </div>
+      </div>
+    </div>
+
+    <!-- right: console -->
+    <div class="panel">
+      <div class="panel-head">
+        <span>GAIN CONSOLE &mdash; AZIMUTH PID</span>
+        <span id="gain-tag" class="tag"></span>
+      </div>
+      <div class="panel-body">
+        <div class="slider-block">
+          <div class="slider-top"><b>Kp</b> <em>proportional &middot; drive / &deg; error</em> <span id="val-kp" class="mono">8.0</span></div>
+          <input type="range" id="sl-kp" min="0" max="60" step="0.5" value="8" />
+          <p class="hint">Stiffness. Too low: sluggish slew. Too high without Kd: ringing and overshoot.</p>
+        </div>
+        <div class="slider-block">
+          <div class="slider-top"><b>Ki</b> <em>integral &middot; drive / &deg;&middot;s</em> <span id="val-ki" class="mono">0.0</span></div>
+          <input type="range" id="sl-ki" min="0" max="30" step="0.5" value="0" />
+          <p class="hint">Bias rejection. Nulls steady error from terrain torque; excess causes slow weave.</p>
+        </div>
+        <div class="slider-block">
+          <div class="slider-top"><b>Kd</b> <em>derivative &middot; drive / &deg;/s</em> <span id="val-kd" class="mono">0.0</span></div>
+          <input type="range" id="sl-kd" min="0" max="16" step="0.1" value="0" />
+          <p class="hint">Damping. Kills overshoot; too much makes the gun heavy and slow to arrive.</p>
+        </div>
+
+        <div class="ctl-row">
+          <label class="overline">Reference responses</label>
+          <div class="btn-row">
+            <button class="btn" data-preset="under">Underdamped demo</button>
+            <button class="btn" data-preset="over">Overdamped demo</button>
+            <button class="btn" data-preset="stock">Stock (reset)</button>
+          </div>
+        </div>
+
+        <div id="crew-note" class="callout info"></div>
+
+        <div class="cert-row">
+          <button id="btn-cert" class="btn primary">Run certification slew</button>
+          <p id="cert-req" class="muted small"></p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- telemetry -->
+  <div class="section">
+    <h3>Live bench telemetry</h3>
+    <div class="legend">
+      <span class="key"><i class="sw solid"></i> gun azimuth (&deg;)</span>
+      <span class="key"><i class="sw dash"></i> commanded azimuth (&deg;)</span>
+    </div>
+    <canvas id="scope-canvas" width="1800" height="380"></canvas>
+    <p id="scope-caption" class="muted small"></p>
+  </div>
+
+  <!-- certification results -->
+  <div id="cert-panel" class="section hidden">
+    <h3 id="cert-heading">Certification result</h3>
+    <div id="cert-banner" class="banner"></div>
+    <div class="stats-row">
+      <div class="stat"><span id="cs-score">&mdash;</span><label id="cs-score-lbl">score</label></div>
+      <div class="stat"><span id="cs-os">&mdash;</span><label>overshoot</label></div>
+      <div class="stat"><span id="cs-settle">&mdash;</span><label>settling (&plusmn;4&deg;)</label></div>
+      <div class="stat"><span id="cs-rise">&mdash;</span><label>rise time (90%)</label></div>
+      <div class="stat"><span id="cs-iae">&mdash;</span><label>IAE (&deg;&middot;s)</label></div>
+    </div>
+    <div class="legend">
+      <span class="key"><i class="sw solid"></i> gun azimuth (&deg;)</span>
+      <span class="key"><i class="sw dash"></i> commanded azimuth (&deg;)</span>
+      <span class="key"><i class="sw band"></i> &plusmn;4&deg; settle window</span>
+    </div>
+    <canvas id="cert-canvas" width="1800" height="420"></canvas>
+    <p class="muted small">Certification slew &middot; scripted 10 s pattern: 0&deg; &rarr; +60&deg; &rarr; &minus;30&deg; &middot; terrain torque on &middot; x-axis: time (s)</p>
+  </div>
+
+  <!-- wargame -->
+  <div id="wargame-panel" class="section hidden">
+    <h3>Deployment — live-fire exercise</h3>
+    <div id="wg-idle">
+      <p class="muted">
+        Stabilizer certified. Deploy the hull to a 60-second live-fire lane: targets pop at random
+        bearings and the fire-control computer needs the gun held within &plusmn;2&deg; for 0.4 s to register
+        a kill. Terrain is rough. Your tune does the shooting.
+      </p>
+      <div class="cert-row">
+        <button id="btn-wargame" class="btn primary">Begin live-fire exercise</button>
+        <p id="wg-best" class="muted small"></p>
+      </div>
+    </div>
+    <div id="wg-hud" class="stats-row hidden">
+      <div class="stat"><span id="wg-time">60.0</span><label>seconds left</label></div>
+      <div class="stat"><span id="wg-hits">0</span><label>kills</label></div>
+      <div class="stat"><span id="wg-miss">0</span><label>missed</label></div>
+      <div class="stat"><span id="wg-acc">&mdash;</span><label>accuracy</label></div>
+    </div>
+    <div id="wg-result" class="banner hidden"></div>
+  </div>
+</section>
+
+<!-- ========================= FIELD MANUAL ========================= -->
+<div id="manual-overlay" class="overlay hidden">
+  <div class="manual">
+    <div class="panel-head"><span>FIELD MANUAL &mdash; PID IN SIXTY SECONDS</span>
+      <button id="btn-manual-close" class="btn ghost">Close</button>
+    </div>
+    <div class="panel-body">
+      <p>The stabilizer measures the gap between commanded and actual gun azimuth (the error) and
+        outputs drive torque: <b class="mono">u = Kp&middot;e + Ki&middot;&int;e&thinsp;dt &minus; Kd&middot;&omega;</b></p>
+      <p><b>Proportional (Kp)</b> pushes harder the further you are from the aim point. It sets how fast
+        the gun gets moving &mdash; but a spring alone always overshoots.</p>
+      <p><b>Derivative (Kd)</b> resists turret rate, like a damper. It turns ringing into a clean,
+        critically damped arrival. Underdamped = overshoots and misses; overdamped = tracks too slowly
+        to follow the wargame.</p>
+      <p><b>Integral (Ki)</b> accumulates leftover error over time. It is the only term that can null a
+        sustained bias such as terrain torque on the trunnion &mdash; but wind it up too far and the
+        overshoot comes back.</p>
+      <p class="muted">Rule of thumb for this bench: damping ratio &asymp; (Kd + b) / (2&middot;&radic;(Kp&middot;J)).
+        Aim near 1.0 for critical damping, then add just enough Ki to hold zero under disturbance.
+        Watch the drive-effort readout &mdash; a saturated drive behaves worse than the math says.</p>
+    </div>
+  </div>
+</div>
+
+<script src="js/tanks.js"></script>
+<script src="js/sim.js"></script>
+<script src="js/game.js"></script>
+</body>
+</html>
