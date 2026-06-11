@@ -2,87 +2,61 @@
 
 **Personal hobby project** — a browser-based mechatronics engineering game.
 
-You are the engineering commander of an armored battalion at a forward operating base: damaged Main
-Battle Tanks roll into your bay, you hook them to a Hardware-in-the-Loop terminal, re-derive the
-turret stabilization PID loop, certify it, and prove the tune under live fire.
+You are the engineering commander of an armored battalion at a forward operating base. Damaged MBTs roll into your bay; you hook each hull to a Hardware-in-the-Loop terminal and certify **three subsystems** before redeploying to the wargame.
 
 No frameworks, no build step — plain HTML/CSS/JS.
 
-> **Play online:** after enabling GitHub Pages on this repo, the game is at  
-> `https://mustafarkhan.github.io/iron-calibrator/`
+**Play online:** [mustafarkhan.github.io/iron-calibrator](https://mustafarkhan.github.io/iron-calibrator/)
 
-## Run
-
-Open `index.html` directly in a browser, or serve the folder:
+## Run locally
 
 ```bash
 python3 -m http.server 8000
-# then open http://localhost:8000
+# open http://localhost:8000
 ```
 
-Progress (gains, certifications, live-fire records) is saved in `localStorage`.
+Progress is saved in `localStorage`. Export/import and reset are available from the hangar.
 
-## The campaign
+## The three engineering bays
 
-Three hulls, unlocked in sequence. Each has genuinely different plant physics, so a tune that
-certifies one will not certify the next:
+Each hull must pass all three before it is **combat ready** and the live-fire lane unlocks.
 
-| Hull | Problem | What it teaches |
+| Bay | Mechanic | What you learn |
 | --- | --- | --- |
-| **VT4 — Hull 117** | Loop gains zeroed in a field repair | Basic P/D shaping: stiffness vs. damping |
-| **T-80UD — Hull 203** | Worn race ring: double inertia, almost no friction | Damping ratio scales with Kd / 2√(Kp·J) — heavy Kd or it rings |
-| **Al-Khalid I — Hull 044** | Derated drive + double terrain torque | Only integral action can null a sustained bias |
+| **Stabilizer PID** | Tune Kp, Ki, Kd on a live turret plant with terrain torque | Control theory — damping, overshoot, integral bias rejection |
+| **Hydraulic traverse** | Set pump pressure, relief crack, and flow gain | Fluid power — pressure/flow limits, relief venting, actuator response |
+| **Fire-control CAN bus** | Fix node IDs and 120 Ω termination | Automotive Ethernet basics — addressing and physical-layer reflections |
+
+## Campaign
+
+Three hulls, unlocked in sequence when the previous hull is fully combat ready:
+
+| Hull | PID challenge | Hydro challenge | Bus challenge |
+| --- | --- | --- | --- |
+| **VT4 — Hull 117** | Zeroed gains after field board swap | Relief valve cracked too low — pump vents dry | Stabilizer ECU on wrong address (0x11) |
+| **T-80UD — Hull 203** | Double inertia, low friction — rings without heavy Kd | Return-line leak — pressure collapses under slew | Missing far-end termination |
+| **Al-Khalid I — Hull 044** | Derated drive + heavy terrain torque — Ki required | Clogged filter caps max flow | LRF on 0x41, near terminator removed |
 
 ## Game loop
 
-1. **HIL bench** — live turret simulation with manual slew commands, terrain disturbance, and a
-   wargame auto-slew mode. Strip-chart telemetry shows gun vs. commanded azimuth. Unstable gains
-   trip a safety clutch.
-2. **Gain console** — Kp / Ki / Kd sliders plus underdamped and overdamped reference presets.
-3. **Certification slew** — deterministic scripted pattern (0° → +60° → −30° over 10 s, terrain on)
-   scored on overshoot, settling time (±4° band), rise time, and IAE. Ranks F through S. Passing
-   unlocks the next hull.
-4. **Live-fire exercise** — 60-second deployment: targets pop at random bearings, and a kill
-   registers only if the gun holds within ±2° for 0.4 s before the target times out. Your tune does
-   the shooting. Ratings: Unqualified / Qualified / Distinguished.
+1. **HIL bench** — live simulation with manual slew, telemetry scopes, and subsystem-specific readouts.
+2. **Certification** — scored test per bay (PID slew pattern, hydraulic pressure/position profile, CAN diagnostic sweep).
+3. **Live-fire exercise** — 60-second deployment after all three bays pass; kills require holding ±2° for 0.4 s.
 
-## The physics
-
-Second-order rotational plant integrated at 240 Hz (live) / 500 Hz (certification):
-
-```
-u  = Kp·e + Ki·∫e dt − Kd·ω      (clamped to drive torque limit)
-Jθ̈ = u + d(t) − b·ω
-```
-
-- Drive saturation is modeled, so large slews behave worse than linear theory predicts.
-- The integrator uses conditional anti-windup (holds while the drive saturates in the same direction).
-- Terrain disturbance is a deterministic multi-sine trunnion torque, so certification runs are fair
-  and repeatable.
-- Scoring constants were balanced numerically: stock and demo gains fail, careful tunes pass,
-  near-optimal tunes reach rank S (≥ 80).
+Keyboard: **1/2/3** switch bays · **Q/E** slew ±15° · **Space** certify · **Esc** hangar
 
 ## Project structure
 
 ```
-index.html      — screens: hangar, bay, field manual overlay
-css/style.css   — flat military HUD theme
-js/tanks.js     — hull roster: plant parameters, work orders, pass thresholds
-js/sim.js       — physics core, certification runner, scoring/ranks
-js/game.js      — game shell: rendering (canvas), wargame mode, persistence, UI wiring
+index.html      — hangar, three bay panels, tutorial, field manual
+css/style.css   — military HUD theme
+js/tanks.js     — hull roster and per-subsystem fault data
+js/sim.js       — PID plant, certification, ranking
+js/hydro.js     — hydraulic circuit simulation
+js/bus.js       — CAN node/termination diagnostics
+js/sound.js     — procedural Web Audio UI sounds
+js/game.js      — rendering, progression, persistence, wargame
 ```
-
-## Roadmap (not yet in the game)
-
-The original concept had three engineering bays; only **turret stabilization (PID)** is implemented
-today. Likely next additions:
-
-- **Hydraulic traverse** — pressure/flow puzzle for a stuck traverse drive
-- **Fire-control bus** — CAN/LIN electrical diagnostics
-- Sound (clutch trip, certification pass/fail, live-fire hits)
-- Reset-progress control and save export/import
-- Keyboard shortcuts for slew commands
-- Automated sim tests in CI
 
 ## License
 

@@ -3,8 +3,11 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<meta name="description" content="Iron Calibrator — tune MBT turret PID loops in a browser-based HIL diagnostics hobby game." />
+<meta name="description" content="Iron Calibrator — tune MBT stabilizer PID, hydraulic traverse, and fire-control bus in a browser HIL diagnostics game." />
+<meta property="og:title" content="Iron Calibrator — Forward HIL Diagnostics" />
+<meta property="og:description" content="Engineer three MBT subsystems: PID stabilization, hydraulics, and CAN bus. Certify the fleet and fight the wargame." />
 <title>Iron Calibrator — Forward HIL Diagnostics</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect fill='%230c1014' width='32' height='32' rx='4'/%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%23e3a23c' stroke-width='2'/%3E%3Cline x1='16' y1='16' x2='16' y2='6' stroke='%23e3a23c' stroke-width='2'/%3E%3C/svg%3E" />
 <link rel="stylesheet" href="css/style.css" />
 </head>
 <body>
@@ -13,30 +16,39 @@
 <section id="screen-hangar" class="screen">
   <header class="masthead">
     <div>
-      <p class="overline">Forward Operating Base "Sarir" &middot; 4th Armored Battalion &middot; Maintenance Company</p>
+      <p class="overline">FOB Sarir &middot; 4th Armored Battalion &middot; Maintenance Company</p>
       <h1>IRON CALIBRATOR</h1>
-      <p class="sub">Forward HIL Diagnostics &mdash; Turret Stabilization Bay</p>
+      <p class="sub">Forward HIL Diagnostics &mdash; Full engineering suite</p>
     </div>
     <div class="fleet-box">
       <p class="overline">Fleet readiness</p>
       <p id="fleet-status" class="fleet-num">0 / 3</p>
-      <p class="muted small">hulls certified</p>
+      <p class="muted small">hulls combat-ready</p>
     </div>
   </header>
 
   <div id="campaign-banner" class="banner hidden"></div>
 
   <p class="brief">
-    Damaged MBTs are rolling in from the multi-domain wargame. Hook each hull to the HIL terminal,
-    re-derive the azimuth PID loop, pass the certification slew, then prove the tune under live fire.
-    Certify a hull to unlock the next bay.
+    Damaged MBTs roll in from the multi-domain wargame. Each hull needs <b>three subsystems</b> certified on
+    the HIL terminal: <b>stabilizer PID</b>, <b>hydraulic traverse</b>, and <b>fire-control CAN bus</b>.
+    Clear all three, then deploy to the live-fire lane. Certify a hull to unlock the next.
   </p>
+
+  <div class="hangar-tools">
+    <label class="tgl"><input type="checkbox" id="tgl-sound" checked /><span>Sound</span></label>
+    <button id="btn-export" class="btn ghost">Export save</button>
+    <button id="btn-import" class="btn ghost">Import save</button>
+    <input type="file" id="import-file" accept="application/json" class="hidden" />
+    <button id="btn-reset" class="btn ghost danger-text">Reset progress</button>
+    <button id="btn-tutorial" class="btn ghost">How to play</button>
+  </div>
 
   <div id="hangar-cards" class="hangar-grid"></div>
 
   <footer class="foot muted small">
-    Engineering sim &middot; second-order turret plant, drive saturation, anti-windup, terrain torque &middot;
-    progress saved locally
+    PID + hydraulics + CAN bus &middot; progress saved locally &middot;
+    <span class="kbd-hint">Keys: 1/2/3 bays &middot; Q/E slew &middot; Space certify</span>
   </footer>
 </section>
 
@@ -52,122 +64,173 @@
     <button id="btn-manual" class="btn ghost">Field manual</button>
   </header>
 
+  <nav id="subsystem-tabs" class="sub-tabs" aria-label="Engineering bays"></nav>
+
   <div id="workorder" class="callout warn"></div>
 
-  <div class="bay-grid">
-    <!-- left: bench -->
-    <div class="panel">
-      <div class="panel-head">
-        <span>HIL BENCH &mdash; LIVE TURRET</span>
-        <span id="bench-mode" class="tag"></span>
-      </div>
-      <div class="panel-body">
-        <canvas id="turret-canvas" width="560" height="560"></canvas>
-        <div class="readouts">
-          <div class="ro"><span id="ro-az">0.0&deg;</span><label>gun azimuth</label></div>
-          <div class="ro"><span id="ro-err">0.0&deg;</span><label>tracking error</label></div>
-          <div class="ro"><span id="ro-rate">0&deg;/s</span><label>traverse rate</label></div>
-          <div class="ro"><span id="ro-eff">0%</span><label>drive effort</label></div>
-        </div>
-        <div class="ctl-row">
-          <label class="overline">Command gun azimuth</label>
-          <div id="slew-buttons" class="btn-row"></div>
-        </div>
-        <div class="ctl-row toggles">
-          <label class="tgl"><input type="checkbox" id="tgl-terrain" checked /><span>Terrain disturbance</span></label>
-          <label class="tgl"><input type="checkbox" id="tgl-autoslew" /><span>Wargame auto-slew</span></label>
-        </div>
-        <div id="clutch-warning" class="callout danger hidden">
-          <strong>SAFETY CLUTCH ENGAGED</strong> &mdash; the loop went unstable and the traverse drive was
-          disconnected. Back off Kp or add Kd before re-engaging.
-        </div>
-      </div>
-    </div>
-
-    <!-- right: console -->
-    <div class="panel">
-      <div class="panel-head">
-        <span>GAIN CONSOLE &mdash; AZIMUTH PID</span>
-        <span id="gain-tag" class="tag"></span>
-      </div>
-      <div class="panel-body">
-        <div class="slider-block">
-          <div class="slider-top"><b>Kp</b> <em>proportional &middot; drive / &deg; error</em> <span id="val-kp" class="mono">8.0</span></div>
-          <input type="range" id="sl-kp" min="0" max="60" step="0.5" value="8" />
-          <p class="hint">Stiffness. Too low: sluggish slew. Too high without Kd: ringing and overshoot.</p>
-        </div>
-        <div class="slider-block">
-          <div class="slider-top"><b>Ki</b> <em>integral &middot; drive / &deg;&middot;s</em> <span id="val-ki" class="mono">0.0</span></div>
-          <input type="range" id="sl-ki" min="0" max="30" step="0.5" value="0" />
-          <p class="hint">Bias rejection. Nulls steady error from terrain torque; excess causes slow weave.</p>
-        </div>
-        <div class="slider-block">
-          <div class="slider-top"><b>Kd</b> <em>derivative &middot; drive / &deg;/s</em> <span id="val-kd" class="mono">0.0</span></div>
-          <input type="range" id="sl-kd" min="0" max="16" step="0.1" value="0" />
-          <p class="hint">Damping. Kills overshoot; too much makes the gun heavy and slow to arrive.</p>
-        </div>
-
-        <div class="ctl-row">
-          <label class="overline">Reference responses</label>
-          <div class="btn-row">
-            <button class="btn" data-preset="under">Underdamped demo</button>
-            <button class="btn" data-preset="over">Overdamped demo</button>
-            <button class="btn" data-preset="stock">Stock (reset)</button>
+  <!-- ======== PID PANEL ======== -->
+  <div id="panel-pid" class="sub-panel">
+    <div class="bay-grid">
+      <div class="panel">
+        <div class="panel-head"><span>HIL BENCH &mdash; LIVE TURRET</span><span id="bench-mode" class="tag"></span></div>
+        <div class="panel-body">
+          <canvas id="turret-canvas" width="560" height="560"></canvas>
+          <div class="readouts">
+            <div class="ro"><span id="ro-az">0.0&deg;</span><label>gun azimuth</label></div>
+            <div class="ro"><span id="ro-err">0.0&deg;</span><label>tracking error</label></div>
+            <div class="ro"><span id="ro-rate">0&deg;/s</span><label>traverse rate</label></div>
+            <div class="ro"><span id="ro-eff">0%</span><label>drive effort</label></div>
+          </div>
+          <div class="ctl-row">
+            <label class="overline">Command gun azimuth <span class="muted">(Q / E)</span></label>
+            <div id="slew-buttons" class="btn-row"></div>
+          </div>
+          <div class="ctl-row toggles">
+            <label class="tgl"><input type="checkbox" id="tgl-terrain" checked /><span>Terrain disturbance</span></label>
+            <label class="tgl"><input type="checkbox" id="tgl-autoslew" /><span>Wargame auto-slew</span></label>
+          </div>
+          <div id="clutch-warning" class="callout danger hidden">
+            <strong>SAFETY CLUTCH ENGAGED</strong> &mdash; loop unstable. Back off Kp or add Kd.
           </div>
         </div>
-
-        <div id="crew-note" class="callout info"></div>
-
-        <div class="cert-row">
-          <button id="btn-cert" class="btn primary">Run certification slew</button>
-          <p id="cert-req" class="muted small"></p>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><span>GAIN CONSOLE &mdash; AZIMUTH PID</span><span id="gain-tag" class="tag"></span></div>
+        <div class="panel-body">
+          <div class="slider-block">
+            <div class="slider-top"><b>Kp</b> <em>drive / &deg; error</em> <span id="val-kp" class="mono">8.0</span></div>
+            <input type="range" id="sl-kp" min="0" max="60" step="0.5" value="8" />
+            <p class="hint">Stiffness. Too low: sluggish. Too high without Kd: ringing.</p>
+          </div>
+          <div class="slider-block">
+            <div class="slider-top"><b>Ki</b> <em>drive / &deg;&middot;s</em> <span id="val-ki" class="mono">0.0</span></div>
+            <input type="range" id="sl-ki" min="0" max="30" step="0.5" value="0" />
+            <p class="hint">Bias rejection under terrain torque.</p>
+          </div>
+          <div class="slider-block">
+            <div class="slider-top"><b>Kd</b> <em>drive / &deg;/s</em> <span id="val-kd" class="mono">0.0</span></div>
+            <input type="range" id="sl-kd" min="0" max="16" step="0.1" value="0" />
+            <p class="hint">Damping. Kills overshoot.</p>
+          </div>
+          <div class="btn-row">
+            <button class="btn" data-preset="under">Underdamped</button>
+            <button class="btn" data-preset="over">Overdamped</button>
+            <button class="btn" data-preset="stock">Stock</button>
+          </div>
+          <div id="crew-note-pid" class="callout info"></div>
+          <div class="cert-row">
+            <button id="btn-cert-pid" class="btn primary">Run certification slew</button>
+            <p id="cert-req-pid" class="muted small"></p>
+          </div>
         </div>
       </div>
     </div>
+    <div class="section">
+      <h3>Live bench telemetry</h3>
+      <div class="legend">
+        <span class="key"><i class="sw solid"></i> gun azimuth</span>
+        <span class="key"><i class="sw dash"></i> commanded</span>
+      </div>
+      <canvas id="scope-canvas" width="1800" height="380"></canvas>
+      <p id="scope-caption" class="muted small"></p>
+    </div>
+    <div id="cert-panel-pid" class="section cert-result hidden">
+      <div id="cert-pid-body"></div>
+      <canvas id="cert-canvas-pid" width="1800" height="420"></canvas>
+    </div>
   </div>
 
-  <!-- telemetry -->
-  <div class="section">
-    <h3>Live bench telemetry</h3>
-    <div class="legend">
-      <span class="key"><i class="sw solid"></i> gun azimuth (&deg;)</span>
-      <span class="key"><i class="sw dash"></i> commanded azimuth (&deg;)</span>
+  <!-- ======== HYDRO PANEL ======== -->
+  <div id="panel-hydro" class="sub-panel hidden">
+    <div class="bay-grid">
+      <div class="panel">
+        <div class="panel-head"><span>HYDRAULIC BENCH &mdash; TRAVERSE ACTUATOR</span><span id="hydro-bench-tag" class="tag"></span></div>
+        <div class="panel-body">
+          <canvas id="hydro-canvas" width="560" height="400"></canvas>
+          <div class="readouts">
+            <div class="ro"><span id="hy-az">0.0&deg;</span><label>traverse position</label></div>
+            <div class="ro"><span id="hy-p">0 bar</span><label>line pressure</label></div>
+            <div class="ro"><span id="hy-flow">0</span><label>flow (rel)</label></div>
+            <div class="ro"><span id="hy-safe">OK</span><label>pressure status</label></div>
+          </div>
+          <div class="ctl-row">
+            <label class="overline">Command traverse</label>
+            <div id="hydro-slew-buttons" class="btn-row"></div>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><span>PUMP CONSOLE &mdash; HYDRAULIC LOOP</span><span id="hydro-tag" class="tag"></span></div>
+        <div class="panel-body">
+          <div class="slider-block">
+            <div class="slider-top"><b>Pump</b> <em>command (bar)</em> <span id="val-pump" class="mono">70</span></div>
+            <input type="range" id="sl-pump" min="40" max="130" step="1" value="70" />
+          </div>
+          <div class="slider-block">
+            <div class="slider-top"><b>Relief</b> <em>crack pressure (bar)</em> <span id="val-relief" class="mono">120</span></div>
+            <input type="range" id="sl-relief" min="100" max="175" step="1" value="120" />
+          </div>
+          <div class="slider-block">
+            <div class="slider-top"><b>Flow gain</b> <em>spool valve</em> <span id="val-flow" class="mono">0.35</span></div>
+            <input type="range" id="sl-flow" min="0.1" max="1" step="0.05" value="0.35" />
+          </div>
+          <div class="btn-row">
+            <button class="btn" data-hpreset="sluggish">Sluggish demo</button>
+            <button class="btn" data-hpreset="aggressive">Over-pressure demo</button>
+            <button class="btn" data-hpreset="stock">Stock</button>
+          </div>
+          <div id="crew-note-hydro" class="callout info"></div>
+          <div class="cert-row">
+            <button id="btn-cert-hydro" class="btn primary">Run hydraulic certification</button>
+            <p id="cert-req-hydro" class="muted small"></p>
+          </div>
+        </div>
+      </div>
     </div>
-    <canvas id="scope-canvas" width="1800" height="380"></canvas>
-    <p id="scope-caption" class="muted small"></p>
+    <div class="section">
+      <h3>Pressure &amp; position telemetry</h3>
+      <div class="legend">
+        <span class="key"><i class="sw solid"></i> position (&deg;)</span>
+        <span class="key"><i class="sw dash" style="border-color:var(--red)"></i> pressure (bar, scaled)</span>
+      </div>
+      <canvas id="hydro-scope" width="1800" height="380"></canvas>
+    </div>
+    <div id="cert-panel-hydro" class="section cert-result hidden"><div id="cert-hydro-body"></div></div>
   </div>
 
-  <!-- certification results -->
-  <div id="cert-panel" class="section hidden">
-    <h3 id="cert-heading">Certification result</h3>
-    <div id="cert-banner" class="banner"></div>
-    <div class="stats-row">
-      <div class="stat"><span id="cs-score">&mdash;</span><label id="cs-score-lbl">score</label></div>
-      <div class="stat"><span id="cs-os">&mdash;</span><label>overshoot</label></div>
-      <div class="stat"><span id="cs-settle">&mdash;</span><label>settling (&plusmn;4&deg;)</label></div>
-      <div class="stat"><span id="cs-rise">&mdash;</span><label>rise time (90%)</label></div>
-      <div class="stat"><span id="cs-iae">&mdash;</span><label>IAE (&deg;&middot;s)</label></div>
+  <!-- ======== BUS PANEL ======== -->
+  <div id="panel-bus" class="sub-panel hidden">
+    <div class="bay-grid">
+      <div class="panel">
+        <div class="panel-head"><span>CAN BUS TOPOLOGY</span><span id="bus-bench-tag" class="tag">DIAGNOSTIC MODE</span></div>
+        <div class="panel-body">
+          <canvas id="bus-canvas" width="560" height="360"></canvas>
+          <div id="bus-log" class="bus-log muted small"></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><span>NODE ADDRESSING &amp; TERMINATION</span></div>
+        <div class="panel-body" id="bus-controls"></div>
+        <div class="panel-body" style="border-top:1px solid var(--line2)">
+          <div id="crew-note-bus" class="callout info"></div>
+          <div class="cert-row">
+            <button id="btn-cert-bus" class="btn primary">Run bus diagnostic sweep</button>
+            <p id="cert-req-bus" class="muted small"></p>
+          </div>
+        </div>
+      </div>
     </div>
-    <div class="legend">
-      <span class="key"><i class="sw solid"></i> gun azimuth (&deg;)</span>
-      <span class="key"><i class="sw dash"></i> commanded azimuth (&deg;)</span>
-      <span class="key"><i class="sw band"></i> &plusmn;4&deg; settle window</span>
-    </div>
-    <canvas id="cert-canvas" width="1800" height="420"></canvas>
-    <p class="muted small">Certification slew &middot; scripted 10 s pattern: 0&deg; &rarr; +60&deg; &rarr; &minus;30&deg; &middot; terrain torque on &middot; x-axis: time (s)</p>
+    <div id="cert-panel-bus" class="section cert-result hidden"><div id="cert-bus-body"></div></div>
   </div>
 
-  <!-- wargame -->
+  <!-- ======== WARGAME (all 3 certified) ======== -->
   <div id="wargame-panel" class="section hidden">
-    <h3>Deployment — live-fire exercise</h3>
+    <h3>Deployment &mdash; live-fire exercise</h3>
     <div id="wg-idle">
-      <p class="muted">
-        Stabilizer certified. Deploy the hull to a 60-second live-fire lane: targets pop at random
-        bearings and the fire-control computer needs the gun held within &plusmn;2&deg; for 0.4 s to register
-        a kill. Terrain is rough. Your tune does the shooting.
-      </p>
+      <p class="muted">All three subsystems certified. Deploy for 60 s live fire: hold within &plusmn;2&deg; for 0.4 s to kill. Terrain on.</p>
       <div class="cert-row">
         <button id="btn-wargame" class="btn primary">Begin live-fire exercise</button>
+        <button id="btn-abort-wg" class="btn hidden">Abort exercise</button>
         <p id="wg-best" class="muted small"></p>
       </div>
     </div>
@@ -181,32 +244,42 @@
   </div>
 </section>
 
+<!-- ========================= TUTORIAL ========================= -->
+<div id="tutorial-overlay" class="overlay hidden">
+  <div class="manual wide">
+    <div class="panel-head"><span>HOW TO PLAY</span><button id="btn-tutorial-close" class="btn ghost">Close</button></div>
+    <div class="panel-body">
+      <p><b>Goal:</b> Certify three engineering bays on each MBT, then pass the live-fire exercise. Clear all three hulls.</p>
+      <p><b>1 — Stabilizer PID:</b> Tune Kp, Ki, Kd so the gun tracks commanded azimuth under terrain torque. Run the certification slew (Space).</p>
+      <p><b>2 — Hydraulic traverse:</b> Set pump pressure, relief crack, and flow gain so the traverse slews without pegging pressure or stalling.</p>
+      <p><b>3 — Fire-control bus:</b> Fix CAN node IDs and 120 &Omega; termination. Run the diagnostic sweep until every node ACKs.</p>
+      <p><b>Live fire</b> unlocks only when all three bays pass on that hull.</p>
+      <p class="muted">Keyboard: <b>1/2/3</b> switch bays &middot; <b>Q/E</b> slew &plusmn;15&deg; &middot; <b>Space</b> run certification &middot; <b>Esc</b> hangar</p>
+      <button id="btn-tutorial-start" class="btn primary">Enter hangar</button>
+    </div>
+  </div>
+</div>
+
 <!-- ========================= FIELD MANUAL ========================= -->
 <div id="manual-overlay" class="overlay hidden">
-  <div class="manual">
-    <div class="panel-head"><span>FIELD MANUAL &mdash; PID IN SIXTY SECONDS</span>
-      <button id="btn-manual-close" class="btn ghost">Close</button>
-    </div>
+  <div class="manual wide">
+    <div class="panel-head"><span>FIELD MANUAL</span><button id="btn-manual-close" class="btn ghost">Close</button></div>
     <div class="panel-body">
-      <p>The stabilizer measures the gap between commanded and actual gun azimuth (the error) and
-        outputs drive torque: <b class="mono">u = Kp&middot;e + Ki&middot;&int;e&thinsp;dt &minus; Kd&middot;&omega;</b></p>
-      <p><b>Proportional (Kp)</b> pushes harder the further you are from the aim point. It sets how fast
-        the gun gets moving &mdash; but a spring alone always overshoots.</p>
-      <p><b>Derivative (Kd)</b> resists turret rate, like a damper. It turns ringing into a clean,
-        critically damped arrival. Underdamped = overshoots and misses; overdamped = tracks too slowly
-        to follow the wargame.</p>
-      <p><b>Integral (Ki)</b> accumulates leftover error over time. It is the only term that can null a
-        sustained bias such as terrain torque on the trunnion &mdash; but wind it up too far and the
-        overshoot comes back.</p>
-      <p class="muted">Rule of thumb for this bench: damping ratio &asymp; (Kd + b) / (2&middot;&radic;(Kp&middot;J)).
-        Aim near 1.0 for critical damping, then add just enough Ki to hold zero under disturbance.
-        Watch the drive-effort readout &mdash; a saturated drive behaves worse than the math says.</p>
+      <h3 class="manual-h">Stabilizer PID</h3>
+      <p><b class="mono">u = Kp&middot;e + Ki&middot;&int;e&thinsp;dt &minus; Kd&middot;&omega;</b> &mdash; Kp for stiffness, Kd for damping, Ki for sustained bias rejection.</p>
+      <h3 class="manual-h">Hydraulic traverse</h3>
+      <p>Pump builds line pressure; relief vents above crack pressure; flow gain maps position error to spool opening. Burst pressure fails certification.</p>
+      <h3 class="manual-h">Fire-control CAN bus</h3>
+      <p>Nodes: Stabilizer <b>0x10</b>, Traverse <b>0x20</b>, Gunner <b>0x30</b>, LRF <b>0x40</b>. Both bus ends need 120 &Omega; termination or reflections corrupt frames.</p>
     </div>
   </div>
 </div>
 
 <script src="js/tanks.js"></script>
 <script src="js/sim.js"></script>
+<script src="js/hydro.js"></script>
+<script src="js/bus.js"></script>
+<script src="js/sound.js"></script>
 <script src="js/game.js"></script>
 </body>
 </html>
